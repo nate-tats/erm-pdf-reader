@@ -1,0 +1,21 @@
+# Build output
+/build/
+/out/
+CMakeUserPresets.json
+
+# IDEs
+.vs/
+.vscode/
+*.user
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Test PDFs: generated fixtures are rebuilt by tools/make_fixtures.py;
+# real scores are copyrighted and stay local.
+/tests/fixtures/generated/
+/tests/fixtures/local/
