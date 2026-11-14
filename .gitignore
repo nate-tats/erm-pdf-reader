@@ -19,3 +19,6 @@ __pycache__/
 # real scores are copyrighted and stay local.
 /tests/fixtures/generated/
 /tests/fixtures/local/
+
+# Downloaded CI builds (moved to Windows by hand)
+/dist/
