@@ -33,15 +33,15 @@ This plan turns the design document into an ordered set of work, with exit crite
 ## 3. Repository layout
 
 ```
-erm/
-  CMakeLists.txt, CMakePresets.json      # presets: win-debug (ASan + clang-tidy), win-release
+erm-pdf-reader/
+  CMakeLists.txt, CMakePresets.json      # presets: linux-debug (ASan + clang-tidy), linux-release, win-release (MSVC, used by CI)
   src/
     core/        PageGeometry, CommandBus, TurnGuard, Command, Settings
     render/      Renderer (interface), QtPdfRenderer, [PdfiumRenderer], PageCache
     annot/       AnnotationModel, AnnotationStore (annotation file I/O), AnnotationLibrary (central store + index), undo commands
     input/       InputService, Binding, BindingStore, sources: Key, Mouse, Wheel, Serial, Remote
     remote/      RemoteBridge (HTTP + WebSocket), Pairing, QR (qrcodegen)
-    platform/    ScreenAwake (interface + win32), FileAccess (interface + desktop)
+    platform/    ScreenAwake (interface + win32 + linux), FileAccess (interface + desktop)
     pdftools/    library (merge, split, extractPages, imagesToPdf) + erm-pdftools CLI
     app/         main.cpp, QML type registration, ImageProvider / PageItem
   qml/           Viewer, Toolbar, Settings, InputMapping, Tools, Setlist screens
@@ -203,7 +203,7 @@ Exit criteria
 
 1. `RemoteBridge`: a `QWebSocketServer` and a minimal static HTTP server for the phone page (see §9 of this plan, question 1, about QHttpServer licensing), bound to the LAN interface the user chooses.
 2. **Interface selection (under review, §9.13):** this laptop has Wi-Fi plus Tailscale and NordVPN adapters, so automatic choice is unreliable. Rank physical adapters first, show the IP, let the user change it, and listen only on that adapter.
-3. Pairing: a one-time token in the QR URL (qrcodegen), exchanged for a session token. One controller at a time (decision of Nov 2), and a new pairing replaces the old one.
+3. Pairing: a one-time token in the QR URL (qrcodegen), exchanged for a session token. One controller at a time (decision of Nov 2): while a phone is paired, any other phone is rejected (decided Nov 14, §9.15). To switch phones, unpair the current one in the app, which makes a new QR code.
 4. Protocol (§7): `{"cmd","seq"}` → `{"ack","page","of"}`. `seq` de-duplication is per session and survives reconnects. The server sends page changes to the phone even when the turn came from another input.
 5. Phone page (vanilla JS, no build step): large Next and Prev buttons that work one-handed and when propped on the stand, optional Half and Jump, page number, a small thumbnail, automatic reconnect with a visible connection state.
 6. Keeping the phone awake: the Wake Lock API **only works in secure contexts (HTTPS)**, and a LAN `http://` page isn't one. **Decision deferred** (§9.2). Decide before M3 starts. The working proposal is the hidden looping-video fallback (the NoSleep.js approach), trying the Wake Lock API first in case the browser allows it.
@@ -314,9 +314,11 @@ gh run download -n erm-windows-portable -D dist/$(git rev-parse --short HEAD)
 
 **Platform code on Linux:** the `platform/` interfaces get Linux implementations (screen-awake via the freedesktop D-Bus inhibit call, or a no-op) so the app runs under WSLg. `#ifdef Q_OS_WIN` appears only inside `platform/`.
 
-**Optional later: local cross-compile.** If waiting for CI becomes the bottleneck, add a `win-cross` preset using llvm-mingw and the Windows MinGW build of Qt (downloaded with `aqtinstall`, with `QT_HOST_PATH` pointing at the Linux Qt). Check first whether Qt PDF is available for MinGW. It ships alongside Qt WebEngine, which is MSVC-only on Windows. If it isn't, this path only works with the PDFium renderer.
+**Packaging**
 - Link Qt as shared libraries (LGPL, Risks table). Ship the licence texts for Qt, qpdf (Apache-2.0), qrcodegen (MIT) and Bravura (OFL) in the installer.
 - Version scheme: `0.<milestone>.<n>` until v1.
+
+**Optional later: local cross-compile.** If waiting for CI becomes the bottleneck, add a `win-cross` preset using llvm-mingw and the Windows MinGW build of Qt (downloaded with `aqtinstall`, with `QT_HOST_PATH` pointing at the Linux Qt). Check first whether Qt PDF is available for MinGW. It ships alongside Qt WebEngine, which is MSVC-only on Windows. If it isn't, this path only works with the PDFium renderer.
 
 ---
 
@@ -330,16 +332,17 @@ These need a decision, ideally before the milestone shown.
 2. **Deferred, decide before M3.** **Wake Lock on the phone (M3).** The Wake Lock API needs HTTPS, and a LAN page is plain HTTP. The working proposal is the hidden-video fallback (M3 task 6). Self-signed HTTPS would cause certificate warnings on every phone.
 3. **Accepted.** **PDFium for images to PDF (M6).** The `FPDFImageObj_*` APIs in §10 aren't exposed by Qt PDF. Using them means shipping a second, standalone copy of PDFium. qpdf, which is already a dependency, can embed JPEGs without re-encoding. Recommendation: use qpdf only, unless the PDFium renderer fallback is adopted anyway.
 4. **Accepted.** **Text, stamps and layers have no milestone.** F4 (Must) and F5 aren't listed under any milestone in §9. This plan adds them as M2b.
-5. **Decided (Nov 3).** **Per-file view settings have no storage location.** Crop, inversion, fold-out choice, two-up cover and skip-blank go in the `view` section of each score's annotation file. Device preferences (dark/sepia, fit mode, tap zones) stay in app settings. Annotations themselves move from sidecars next to the PDF to a central library in `Documents\Erm\Annotations` (§4.4). **Update design doc §6 and §11 to match.** The trade-offs accepted: annotations no longer travel with a copied PDF (covered by export/import, M5) and the content hash becomes the only link (covered by the index and reattach flow, M2a).
-6. **Decided (Nov 3).** **Finger input while annotating.** §5 says pen input never turns pages in annotation mode, and §6 says fingers turn pages when a stylus is in use, which would leave no finger gesture for pan and select. Decision: in annotation mode, page turns need an edge swipe or a dedicated button (toolbar Next/Prev, or a mapped pedal, key or remote). Finger taps and drags are for pan, zoom and select. Details are in M2a task 4. Update §5 and §6 of the design doc to match.
-7. **Accepted.** **Hash coverage.** Hashing the size plus the first and last 1 MB won't notice an edit in the middle that keeps the same size. That's rare, and acceptable given the reattach flow, but record it in the doc.
+5. **Decided (Nov 3).** **Per-file view settings have no storage location.** Crop, inversion, fold-out choice, two-up cover and skip-blank go in the `view` section of each score's annotation file. Device preferences (dark/sepia, fit mode, tap zones) stay in app settings. Annotations themselves move from sidecars next to the PDF to a central library in `Documents\Erm\Annotations` (§4.4). The trade-offs accepted: annotations no longer travel with a copied PDF (covered by export/import, M5) and the content hash becomes the only link (covered by the index and reattach flow, M2a). *(Design doc §4, §6, §8, §10 and §11 updated Nov 14.)*
+6. **Decided (Nov 3).** **Finger input while annotating.** §5 says pen input never turns pages in annotation mode, and §6 says fingers turn pages when a stylus is in use, which would leave no finger gesture for pan and select. Decision: in annotation mode, page turns need an edge swipe or a dedicated button (toolbar Next/Prev, or a mapped pedal, key or remote). Finger taps and drags are for pan, zoom and select. Details are in M2a task 4. *(Design doc §5 and §6 updated Nov 14.)*
+7. **Accepted.** **Hash coverage.** Hashing the size plus the first and last 1 MB won't notice an edit in the middle that keeps the same size. That's rare, and acceptable given the reattach flow, but record it in the doc. *(Recorded in design doc §6, Nov 14.)*
 8. **Accepted.** **"Pointer Events" (§6)** is browser terminology. In Qt this is `QPointerEvent`/`QTabletEvent` through `PointHandler`. This only matters to keep the doc accurate.
 9. **Deferred.** **Memory on high-DPI 2-in-1s.** At 3000×2000, one ARGB32 page is about 24 MB, so a 4-page cache in two-up uses around 190 MB before Qt and the PDF itself. Consider `Format_Grayscale8` for pages detected as greyscale (most scans) to cut that by 4×. Measure this in M0.
 10. **Deferred.** **Missing page navigation.** There is no requirement for go-to-page or thumbnails, but they're needed in practice. Added to M1.
 11. **Deferred.** **Setlist file format** isn't specified. This plan proposes `.ermset` JSON (M5).
 12. **Deferred.** **Windows press-and-hold (M5).** Windows turns a long touch press into a right-click, and edge swipes open system panels. Both can interfere with the 2 s stage-mode exit and the annotation-mode edge swipe. Proposed fix: turn off press-and-hold and edge gestures for the Erm window.
 13. **Under review.** **Network adapter for the phone remote (M3).** The QR code has to contain an IP address the phone can reach, but this laptop has several adapters: Wi-Fi, Tailscale, NordLynx (NordVPN) and other virtual ones (`ipconfig`, Nov 3). NordLynx also has a default gateway, so even "pick the adapter with the default route" could choose the VPN. While NordVPN is connected, it may also block incoming LAN connections unless its LAN-access setting is on. Proposal: list adapters, rank physical Wi-Fi/Ethernet first and skip known virtual and VPN adapters, show the chosen IP next to the QR code, let the user pick another, remember the choice per network, and listen only on that adapter. If the phone never connects, show a hint about VPNs and the firewall.
-14. **Decided (Nov 3).** **Develop on Linux, build the Windows exe in CI.** This replaces design doc §8's "build and test the app on Windows" and its advice to keep the project on the Windows file system. The work happens in WSL, and GitHub Actions builds the MSVC `.exe` (§8 of this plan). Trade-offs: there's no local Windows debugger (Windows-only bugs are investigated through CI logs, crash dumps, or a temporary local MSVC install), every Windows test needs a push and a 5–10 minute build, and the Windows-specific code (pen, screen-awake, firewall) only runs on Windows. **Update design doc §8 to match.** The repo is public, so Actions minutes are free, but everything pushed is public too.
+14. **Decided (Nov 3).** **Develop on Linux, build the Windows exe in CI.** This replaces design doc §8's "build and test the app on Windows" and its advice to keep the project on the Windows file system. The work happens in WSL, and GitHub Actions builds the MSVC `.exe` (§8 of this plan). Trade-offs: there's no local Windows debugger (Windows-only bugs are investigated through CI logs, crash dumps, or a temporary local MSVC install), every Windows test needs a push and a 5–10 minute build, and the Windows-specific code (pen, screen-awake, firewall) only runs on Windows. *(Design doc §4 and §8 updated Nov 14.)* The repo is public, so Actions minutes are free, but everything pushed is public too.
+15. **Decided (Nov 14).** **A second phone while one is paired (M3).** M3 task 3 said a new pairing replaces the old one, while the M3 exit criteria said a second phone is rejected. Decision: reject it. To switch phones, unpair the current one in the app, which makes a new QR code. The design doc's "shared mode" mention (§7) is removed to match the Nov 2 decision.
 
 ---
 
